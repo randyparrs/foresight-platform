@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:test" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 
 import json
 from genlayer import *
@@ -12,11 +12,8 @@ class TheSignal(gl.Contract):
     article_data: DynArray[str]
     category_index: DynArray[str]
 
-    def __init__(self, owner_address: Address):
-        if isinstance(owner_address, int):
-            self.owner = Address(owner_address.to_bytes(20, 'big'))
-        else:
-            self.owner = owner_address
+    def __init__(self):
+        self.owner = gl.message.sender_address
         self.article_counter = u256(0)
         self.block_counter = u256(0)
 
@@ -57,14 +54,19 @@ class TheSignal(gl.Contract):
 
     @gl.public.view
     def get_latest(self, count: u256) -> str:
-        total = int(self.article_counter)
-        n = int(count)
+        article_ids = []
+        for i in range(len(self.article_data)):
+            entry = self.article_data[i]
+            if "_title:" in entry:
+                aid = entry[:entry.index("_title:")]
+                article_ids.append(aid)
+        total = len(article_ids)
         if total == 0:
             return "No articles published yet"
+        n = int(count)
         start = max(0, total - n)
         results = []
-        for i in range(start, total):
-            aid = str(i)
+        for aid in article_ids[start:]:
             title = self._get(aid, "title")
             category = self._get(aid, "category")
             sentiment = self._get(aid, "sentiment")
@@ -73,7 +75,13 @@ class TheSignal(gl.Contract):
 
     @gl.public.view
     def get_summary(self) -> str:
-        total = int(self.article_counter)
+        article_ids = []
+        for i in range(len(self.article_data)):
+            entry = self.article_data[i]
+            if "_title:" in entry:
+                aid = entry[:entry.index("_title:")]
+                article_ids.append(aid)
+        total = len(article_ids)
         crypto = 0
         sports = 0
         politics = 0
@@ -83,8 +91,7 @@ class TheSignal(gl.Contract):
         bullish = 0
         bearish = 0
         neutral = 0
-        for i in range(total):
-            aid = str(i)
+        for aid in article_ids:
             cat = self._get(aid, "category")
             sent = self._get(aid, "sentiment")
             if cat == "CRYPTO":
@@ -183,9 +190,7 @@ Respond ONLY with this JSON:
 sentiment must be exactly one of: {sentiment_options.replace(', or ', ', ')}.
 No extra text."""
 
-            result = gl.nondet.exec_prompt(prompt)
-            clean = result.strip().replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean)
+            data = gl.nondet.exec_prompt(prompt, response_format="json")
 
             title = data.get("title", "Untitled")
             headline = data.get("headline", "")
@@ -205,30 +210,28 @@ No extra text."""
             headline = headline[:150]
             body = body[:600]
 
-            return json.dumps({
+            return {
                 "title": title,
                 "headline": headline,
                 "body": body,
                 "tags": tags,
                 "sentiment": sentiment,
                 "sources": ", ".join(source_list[:3])
-            }, sort_keys=True)
+            }
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
                 return False
             try:
-                validator_raw = leader_fn()
-                leader_data = json.loads(leader_result.calldata)
-                validator_data = json.loads(validator_raw)
-                if leader_data["sentiment"] != validator_data["sentiment"]:
+                validator_result = leader_fn()
+                leader_data = leader_result.calldata
+                if leader_data["sentiment"] != validator_result["sentiment"]:
                     return False
                 return True
             except Exception:
                 return False
 
-        raw = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
-        data = json.loads(raw)
+        data = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
         self._set(article_id, "title", data["title"])
         self._set(article_id, "headline", data["headline"])

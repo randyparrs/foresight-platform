@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:test" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 
 import json
 from genlayer import *
@@ -14,11 +14,10 @@ class ForesightMarkets(gl.Contract):
     claimed: DynArray[str]
     source_stats: DynArray[str]
 
-    def __init__(self, owner_address: Address):
-        if isinstance(owner_address, int):
-            self.owner = Address(owner_address.to_bytes(20, 'big'))
-        else:
-            self.owner = owner_address
+    bettors: DynArray[str]
+
+    def __init__(self):
+        self.owner = gl.message.sender_address
         self.market_counter = u256(0)
         self.block_counter = u256(0)
 
@@ -60,16 +59,17 @@ class ForesightMarkets(gl.Contract):
 
     @gl.public.view
     def get_markets_by_category(self, category: str) -> str:
-        total = int(self.market_counter)
+        cat_upper = category.upper()
+        suffix = f"_category:{cat_upper}"
         ids = []
-        for i in range(total):
-            mid = str(i)
-            cat = self._get(mid, "category")
-            if cat.upper() == category.upper():
+        for i in range(len(self.market_data)):
+            entry = self.market_data[i]
+            if entry.endswith(suffix):
+                mid = entry[:entry.index("_category:")]
                 ids.append(mid)
         if not ids:
-            return f"No markets found for category: {category}"
-        return f"Category {category}: {len(ids)} market(s): {', '.join(ids)}"
+            return f"No markets found for category: {cat_upper}"
+        return f"Category {cat_upper}: {len(ids)} market(s): {', '.join(ids)}"
 
     @gl.public.view
     def get_source_reputation(self, url: str) -> str:
@@ -87,13 +87,18 @@ class ForesightMarkets(gl.Contract):
 
     @gl.public.view
     def get_summary(self) -> str:
-        total = int(self.market_counter)
+        market_ids = []
+        for i in range(len(self.market_data)):
+            entry = self.market_data[i]
+            if "_category:" in entry:
+                mid = entry[:entry.index("_category:")]
+                market_ids.append(mid)
+        total = len(market_ids)
         open_markets = 0
         resolved = 0
         disputed = 0
         expired = 0
-        for i in range(total):
-            mid = str(i)
+        for mid in market_ids:
             status = self._get(mid, "status")
             if status == "open":
                 open_markets += 1
@@ -104,14 +109,108 @@ class ForesightMarkets(gl.Contract):
             elif status == "expired":
                 expired += 1
         return (
-            f"Prophet Markets\n"
+            f"Foresight Markets\n"
             f"Total Markets: {total}\n"
             f"Open: {open_markets}\n"
             f"Resolved: {resolved}\n"
             f"Disputed: {disputed}\n"
             f"Expired: {expired}\n"
-            f"Total Predictions: {len(self.predictions)}"
+            f"Total Predictions: {len(self.predictions)}\n"
+            f"Unique Predictors: {len(self.bettors)}"
         )
+
+    # ── Predictor leaderboard (added v0.2) ────────────────────────────────────
+
+    @gl.public.view
+    def get_bettor_count(self) -> u256:
+        return u256(len(self.bettors))
+
+    @gl.public.view
+    def get_predictor_stats(self, user_address: str) -> str:
+        addr = user_address.lower()
+        wins = 0
+        losses = 0
+        total = 0
+        for i in range(len(self.predictions)):
+            entry = self.predictions[i]
+            parts = entry.split(":")
+            if len(parts) < 4 or parts[1].lower() != addr:
+                continue
+            total += 1
+            market_id = parts[0]
+            side = parts[2]
+            status = self._get(market_id, "status")
+            if status == "resolved":
+                result = self._get(market_id, "result")
+                if result == "YES" or result == "NO":
+                    if side == result:
+                        wins += 1
+                    else:
+                        losses += 1
+        if total == 0:
+            return "Not a predictor yet"
+        return f"{addr}={wins}W/{losses}L/{total}T"
+
+    @gl.public.view
+    def get_top_predictors(self) -> str:
+        if len(self.bettors) == 0:
+            return "No predictors yet"
+
+        # Initialize parallel arrays with all known bettors
+        addrs = []
+        wins_arr = []
+        losses_arr = []
+        total_arr = []
+        for i in range(len(self.bettors)):
+            addrs.append(self.bettors[i])
+            wins_arr.append(0)
+            losses_arr.append(0)
+            total_arr.append(0)
+
+        # Aggregate stats by scanning every prediction
+        for i in range(len(self.predictions)):
+            entry = self.predictions[i]
+            parts = entry.split(":")
+            if len(parts) < 4:
+                continue
+            market_id = parts[0]
+            addr = parts[1].lower()
+            side = parts[2]
+
+            # Find this bettor's index in our parallel arrays
+            idx = -1
+            for j in range(len(addrs)):
+                if addrs[j] == addr:
+                    idx = j
+                    break
+            if idx == -1:
+                continue
+
+            total_arr[idx] = total_arr[idx] + 1
+
+            status = self._get(market_id, "status")
+            if status == "resolved":
+                result = self._get(market_id, "result")
+                if result == "YES" or result == "NO":
+                    if side == result:
+                        wins_arr[idx] = wins_arr[idx] + 1
+                    else:
+                        losses_arr[idx] = losses_arr[idx] + 1
+
+        # Sort indexes by wins desc, then total desc
+        order = list(range(len(addrs)))
+        order.sort(key=lambda k: (-wins_arr[k], -total_arr[k]))
+
+        # Format top 50
+        parts_out = []
+        limit = len(order)
+        if limit > 50:
+            limit = 50
+        for n in range(limit):
+            k = order[n]
+            parts_out.append(f"{addrs[k]}={wins_arr[k]}W/{losses_arr[k]}L/{total_arr[k]}T")
+
+        return f"Top predictors ({len(addrs)}): " + " | ".join(parts_out)
 
     @gl.public.write
     def generate_market(self, news_url: str, topic_hint: str) -> str:
@@ -162,9 +261,7 @@ reject must be true if quality_score is below 6, false otherwise.
 question must be a clear YES or NO question under 120 characters.
 No extra text."""
 
-            result = gl.nondet.exec_prompt(prompt)
-            clean = result.strip().replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean)
+            data = gl.nondet.exec_prompt(prompt, response_format="json")
 
             question = data.get("question", "")
             category = data.get("category", "OTHER")
@@ -179,32 +276,30 @@ No extra text."""
             if quality_score < 6:
                 reject = True
 
-            return json.dumps({
+            return {
                 "question": question,
                 "category": category,
                 "quality_score": quality_score,
                 "reject": reject,
                 "reject_reason": reject_reason,
                 "context": context
-            }, sort_keys=True)
+            }
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
                 return False
             try:
-                validator_raw = leader_fn()
-                leader_data = json.loads(leader_result.calldata)
-                validator_data = json.loads(validator_raw)
-                if leader_data["reject"] != validator_data["reject"]:
+                validator_result = leader_fn()
+                leader_data = leader_result.calldata
+                if leader_data["reject"] != validator_result["reject"]:
                     return False
-                if leader_data["category"] != validator_data["category"]:
+                if leader_data["category"] != validator_result["category"]:
                     return False
                 return True
             except Exception:
                 return False
 
-        raw = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
-        data = json.loads(raw)
+        data = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
         if data["reject"]:
             return (
@@ -246,6 +341,15 @@ No extra text."""
 
         self.predictions.append(f"{market_id}:{caller}:{side}:{amount}")
 
+        caller_lower = caller.lower()
+        already_bettor = False
+        for i in range(len(self.bettors)):
+            if self.bettors[i] == caller_lower:
+                already_bettor = True
+                break
+        if not already_bettor:
+            self.bettors.append(caller_lower)
+
         yes_pool = int(self._get(market_id, "yes_pool") or "0")
         no_pool = int(self._get(market_id, "no_pool") or "0")
 
@@ -259,103 +363,80 @@ No extra text."""
             return f"Prediction placed: NO on market {market_id}. Pool: YES={yes_pool} NO={new_no}"
 
     @gl.public.write
-    def resolve_market(
-        self,
-        market_id: str,
-        source_url_1: str,
-        source_url_2: str,
-        source_url_3: str,
-    ) -> str:
+    def resolve_market(self, market_id: str) -> str:
         assert self._get(market_id, "status") == "open", "Market is not open"
 
         self.block_counter = u256(int(self.block_counter) + 1)
         question = self._get(market_id, "question")
         context = self._get(market_id, "context")
         category = self._get(market_id, "category")
+        news_url = self._get(market_id, "news_url")
 
         def leader_fn():
-            sources = []
-            for url in (source_url_1, source_url_2, source_url_3):
-                if len(url) >= 10:
-                    try:
-                        response = gl.nondet.web.get(url)
-                        raw = response.body.decode("utf-8")
-                        sources.append(f"Source ({url}):\n{raw[:1500]}")
-                    except Exception:
-                        sources.append(f"Source ({url}): Could not fetch content.")
+            web_data = ""
+            try:
+                response = gl.nondet.web.get(news_url)
+                raw = response.body.decode("utf-8")
+                web_data = raw[:3000]
+            except Exception:
+                web_data = "Could not fetch content."
 
-            sources_text = "\n\n".join(sources)
-
-            prompt = f"""You are an AI resolving a prediction market. Read the sources below
-and determine if the event described in the question has occurred or not.
+            prompt = f"""You are an AI resolving a prediction market.
+Read the web content below and determine if the event in the question has occurred.
 
 Market Question: {question}
 Category: {category}
 Background: {context}
+Source: {news_url}
 
-Sources:
-{sources_text}
+Web content:
+{web_data}
 
-Based on all sources combined:
-- Answer YES if the event clearly happened according to the sources
+Based on the content:
+- Answer YES if the event clearly happened
 - Answer NO if the event clearly did not happen
-- Answer DISPUTED if sources contradict each other or there is not enough clear evidence
-
-Confidence is the percentage of sources that support your final answer.
+- Answer DISPUTED if there is not enough clear evidence
 
 Respond ONLY with this JSON:
 {{
   "result": "YES",
-  "confidence": 67,
-  "sources_yes": 2,
-  "sources_no": 0,
-  "sources_unclear": 1,
-  "reasoning": "two sentences explaining what the sources say and why you reached this conclusion"
+  "confidence": 70,
+  "reasoning": "two sentences explaining what the content says and why you reached this conclusion"
 }}
 
 result must be exactly YES, NO, or DISPUTED.
 confidence is an integer from 0 to 100.
 No extra text."""
 
-            result = gl.nondet.exec_prompt(prompt)
-            clean = result.strip().replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean)
+            data = gl.nondet.exec_prompt(prompt, response_format="json")
 
             outcome = data.get("result", "DISPUTED")
             confidence = int(data.get("confidence", 50))
             reasoning = data.get("reasoning", "")
-            sources_yes = int(data.get("sources_yes", 0))
-            sources_no = int(data.get("sources_no", 0))
-            sources_unclear = int(data.get("sources_unclear", 0))
 
             if outcome not in ("YES", "NO", "DISPUTED"):
                 outcome = "DISPUTED"
             confidence = max(0, min(100, confidence))
 
-            return json.dumps({
+            return {
                 "result": outcome,
                 "confidence": confidence,
-                "sources_yes": sources_yes,
-                "sources_no": sources_no,
-                "sources_unclear": sources_unclear,
                 "reasoning": reasoning
-            }, sort_keys=True)
+            }
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
                 return False
             try:
-                validator_raw = leader_fn()
-                leader_data = json.loads(leader_result.calldata)
-                validator_data = json.loads(validator_raw)
-                if leader_data["result"] != validator_data["result"]:
+                validator_result = leader_fn()
+                leader_data = leader_result.calldata
+                if leader_data["result"] != validator_result["result"]:
                     return False
-                return abs(leader_data["confidence"] - validator_data["confidence"]) <= 20
+                return abs(leader_data["confidence"] - validator_result["confidence"]) <= 20
             except Exception:
                 return False
 
-        raw = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
-        data = json.loads(raw)
+        data = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
         outcome = data["result"]
         confidence = data["confidence"]
@@ -371,31 +452,21 @@ No extra text."""
             self._set(market_id, "result", "DISPUTED")
             return (
                 f"Market {market_id} is DISPUTED ({confidence}% confidence). "
-                f"Sources disagreed. Call re_resolve_market with different sources. "
+                f"Not enough evidence found. Try re-resolving later. "
                 f"Reasoning: {reasoning}"
             )
 
         self._set(market_id, "status", "resolved")
         self._set(market_id, "result", outcome)
-
-        for url in (source_url_1, source_url_2, source_url_3):
-            if len(url) >= 10:
-                self._update_source(url, True)
+        self._update_source(news_url, True)
 
         return (
             f"Market {market_id} resolved: {outcome} ({confidence}% confidence). "
-            f"Sources: {data['sources_yes']} YES / {data['sources_no']} NO / {data['sources_unclear']} unclear. "
             f"{reasoning}"
         )
 
     @gl.public.write
-    def re_resolve_market(
-        self,
-        market_id: str,
-        source_url_1: str,
-        source_url_2: str,
-        source_url_3: str,
-    ) -> str:
+    def re_resolve_market(self, market_id: str) -> str:
         assert self._get(market_id, "status") == "disputed", "Market is not disputed"
         resolve_attempts = int(self._get(market_id, "resolve_attempts") or "0")
         assert resolve_attempts < 3, "Maximum resolve attempts reached. Call expire_market."
@@ -404,31 +475,29 @@ No extra text."""
         question = self._get(market_id, "question")
         context = self._get(market_id, "context")
         category = self._get(market_id, "category")
+        news_url = self._get(market_id, "news_url")
 
         def leader_fn():
-            sources = []
-            for url in (source_url_1, source_url_2, source_url_3):
-                if len(url) >= 10:
-                    try:
-                        response = gl.nondet.web.get(url)
-                        raw = response.body.decode("utf-8")
-                        sources.append(f"Source ({url}):\n{raw[:1500]}")
-                    except Exception:
-                        sources.append(f"Source ({url}): Could not fetch content.")
-
-            sources_text = "\n\n".join(sources)
+            web_data = ""
+            try:
+                response = gl.nondet.web.get(news_url)
+                raw = response.body.decode("utf-8")
+                web_data = raw[:3000]
+            except Exception:
+                web_data = "Could not fetch content."
 
             prompt = f"""You are an AI resolving a prediction market that was previously DISPUTED.
-New sources have been provided. Read them carefully and try to reach a clear conclusion.
+Try to reach a clear conclusion using the web content below.
 
 Market Question: {question}
 Category: {category}
 Background: {context}
+Source: {news_url}
 
-New Sources:
-{sources_text}
+Web content:
+{web_data}
 
-Based on all sources:
+Based on the content:
 - Answer YES if the event clearly happened
 - Answer NO if the event clearly did not happen
 - Answer DISPUTED only if truly no conclusion can be reached
@@ -436,56 +505,43 @@ Based on all sources:
 Respond ONLY with this JSON:
 {{
   "result": "YES",
-  "confidence": 67,
-  "sources_yes": 2,
-  "sources_no": 0,
-  "sources_unclear": 1,
-  "reasoning": "two sentences explaining what the sources say and why you reached this conclusion"
+  "confidence": 70,
+  "reasoning": "two sentences explaining what the content says and why you reached this conclusion"
 }}
 
 result must be exactly YES, NO, or DISPUTED.
 confidence is an integer from 0 to 100.
 No extra text."""
 
-            result = gl.nondet.exec_prompt(prompt)
-            clean = result.strip().replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean)
+            data = gl.nondet.exec_prompt(prompt, response_format="json")
 
             outcome = data.get("result", "DISPUTED")
             confidence = int(data.get("confidence", 50))
             reasoning = data.get("reasoning", "")
-            sources_yes = int(data.get("sources_yes", 0))
-            sources_no = int(data.get("sources_no", 0))
-            sources_unclear = int(data.get("sources_unclear", 0))
 
             if outcome not in ("YES", "NO", "DISPUTED"):
                 outcome = "DISPUTED"
             confidence = max(0, min(100, confidence))
 
-            return json.dumps({
+            return {
                 "result": outcome,
                 "confidence": confidence,
-                "sources_yes": sources_yes,
-                "sources_no": sources_no,
-                "sources_unclear": sources_unclear,
                 "reasoning": reasoning
-            }, sort_keys=True)
+            }
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
                 return False
             try:
-                validator_raw = leader_fn()
-                leader_data = json.loads(leader_result.calldata)
-                validator_data = json.loads(validator_raw)
-                if leader_data["result"] != validator_data["result"]:
+                validator_result = leader_fn()
+                leader_data = leader_result.calldata
+                if leader_data["result"] != validator_result["result"]:
                     return False
-                return abs(leader_data["confidence"] - validator_data["confidence"]) <= 20
+                return abs(leader_data["confidence"] - validator_result["confidence"]) <= 20
             except Exception:
                 return False
 
-        raw = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
-        data = json.loads(raw)
+        data = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
         outcome = data["result"]
         confidence = data["confidence"]
@@ -502,7 +558,7 @@ No extra text."""
             if remaining > 0:
                 return (
                     f"Market {market_id} still DISPUTED after attempt {new_attempts}. "
-                    f"{remaining} attempt(s) remaining. Try different sources. "
+                    f"{remaining} attempt(s) remaining. "
                     f"Reasoning: {reasoning}"
                 )
             else:
@@ -514,10 +570,7 @@ No extra text."""
 
         self._set(market_id, "status", "resolved")
         self._set(market_id, "result", outcome)
-
-        for url in (source_url_1, source_url_2, source_url_3):
-            if len(url) >= 10:
-                self._update_source(url, True)
+        self._update_source(news_url, True)
 
         return (
             f"Market {market_id} resolved on attempt {new_attempts}: {outcome} ({confidence}% confidence). "
