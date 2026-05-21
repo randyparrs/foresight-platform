@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
+# { "Depends": "py-genlayer:1j12s63yfjpva9ik2xgnffgrs6v44y1f52jvj9w7xvdn7qckd379" }
 
 from genlayer import *
 
@@ -50,7 +50,7 @@ class ForesightMarkets(gl.Contract):
         for i in range(len(self.predictions)):
             entry = self.predictions[i]
             parts = entry.split(":")
-            if len(parts) >= 4 and parts[1].lower() == user_address.lower():
+            if len(parts) >= 4 and parts[1].lower() == str(user_address).lower():
                 my_preds.append(f"M{parts[0]}={parts[2]}({parts[3]}pts)")
         if not my_preds:
             return "No predictions found"
@@ -126,7 +126,7 @@ class ForesightMarkets(gl.Contract):
 
     @gl.public.view
     def get_predictor_stats(self, user_address: str) -> str:
-        addr = user_address.lower()
+        addr = str(user_address).lower()
         wins = 0
         losses = 0
         total = 0
@@ -223,9 +223,7 @@ class ForesightMarkets(gl.Contract):
         def leader_fn():
             web_data = ""
             try:
-                response = gl.nondet.web.get(news_url)
-                raw = response.body.decode("utf-8")
-                web_data = raw[:4000]
+                web_data = gl.nondet.web.render(news_url, mode="text")[:4000]
             except Exception:
                 web_data = "Could not fetch news content."
 
@@ -284,12 +282,12 @@ No extra text."""
                 "context": context
             }
 
-        def validator_fn(leader_result) -> bool:
-            if not isinstance(leader_result, gl.vm.Return):
+        def validator_fn(leaders_result) -> bool:
+            if not isinstance(leaders_result, gl.vm.Return):
                 return False
             try:
                 validator_result = leader_fn()
-                leader_data = leader_result.calldata
+                leader_data = leaders_result.calldata
                 if leader_data["reject"] != validator_result["reject"]:
                     return False
                 if leader_data["category"] != validator_result["category"]:
@@ -374,9 +372,7 @@ No extra text."""
         def leader_fn():
             web_data = ""
             try:
-                response = gl.nondet.web.get(news_url)
-                raw = response.body.decode("utf-8")
-                web_data = raw[:3000]
+                web_data = gl.nondet.web.render(news_url, mode="text")[:3000]
             except Exception:
                 web_data = "Could not fetch content."
 
@@ -423,12 +419,12 @@ No extra text."""
                 "reasoning": reasoning
             }
 
-        def validator_fn(leader_result) -> bool:
-            if not isinstance(leader_result, gl.vm.Return):
+        def validator_fn(leaders_result) -> bool:
+            if not isinstance(leaders_result, gl.vm.Return):
                 return False
             try:
                 validator_result = leader_fn()
-                leader_data = leader_result.calldata
+                leader_data = leaders_result.calldata
                 if leader_data["result"] != validator_result["result"]:
                     return False
                 return abs(leader_data["confidence"] - validator_result["confidence"]) <= 20
@@ -479,9 +475,7 @@ No extra text."""
         def leader_fn():
             web_data = ""
             try:
-                response = gl.nondet.web.get(news_url)
-                raw = response.body.decode("utf-8")
-                web_data = raw[:3000]
+                web_data = gl.nondet.web.render(news_url, mode="text")[:3000]
             except Exception:
                 web_data = "Could not fetch content."
 
@@ -528,12 +522,12 @@ No extra text."""
                 "reasoning": reasoning
             }
 
-        def validator_fn(leader_result) -> bool:
-            if not isinstance(leader_result, gl.vm.Return):
+        def validator_fn(leaders_result) -> bool:
+            if not isinstance(leaders_result, gl.vm.Return):
                 return False
             try:
                 validator_result = leader_fn()
-                leader_data = leader_result.calldata
+                leader_data = leaders_result.calldata
                 if leader_data["result"] != validator_result["result"]:
                     return False
                 return abs(leader_data["confidence"] - validator_result["confidence"]) <= 20

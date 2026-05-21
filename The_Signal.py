@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
+# { "Depends": "py-genlayer:1j12s63yfjpva9ik2xgnffgrs6v44y1f52jvj9w7xvdn7qckd379" }
 
 from genlayer import *
 
@@ -143,8 +143,7 @@ class TheSignal(gl.Contract):
             for url in (source_url_1, source_url_2, source_url_3):
                 if len(url) >= 10:
                     try:
-                        response = gl.nondet.web.get(url)
-                        raw = response.body.decode("utf-8")
+                        raw = gl.nondet.web.render(url, mode="text")
                         sources.append(f"Source ({url}):\n{raw[:2000]}")
                         source_list.append(url)
                     except Exception:
@@ -218,12 +217,12 @@ No extra text."""
                 "sources": ", ".join(source_list[:3])
             }
 
-        def validator_fn(leader_result) -> bool:
-            if not isinstance(leader_result, gl.vm.Return):
+        def validator_fn(leaders_result) -> bool:
+            if not isinstance(leaders_result, gl.vm.Return):
                 return False
             try:
                 validator_result = leader_fn()
-                leader_data = leader_result.calldata
+                leader_data = leaders_result.calldata
                 if leader_data["sentiment"] != validator_result["sentiment"]:
                     return False
                 return True
