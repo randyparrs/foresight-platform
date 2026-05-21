@@ -100,7 +100,7 @@ Using py-genlayer:test is blocked on Bradbury (non-debug mode) and will cause a 
 
 ## The bot
 
-An off-chain bot automates platform activity so markets and articles are generated continuously without manual intervention. The bot runs on GitHub Actions and each run picks a random news article from a curated pool, calls generate_market on the Markets contract, and calls publish_article on the Signal contract. The bot uses genlayer-js to send transactions and waits for each one to finalize before exiting.
+An off-chain bot automates platform activity so markets and articles are generated continuously without manual intervention. The bot runs every hour triggered by cron-job.org via GitHub Actions dispatch. Each run picks a random news article from a curated pool, calls generate_market on the Markets contract, and calls publish_article on the Signal contract. The bot uses genlayer-js to send transactions and waits for each one to finalize before exiting.
 
 The bot repository is at https://github.com/randyparrs/foresight-bot and the private key is stored as a GitHub Actions secret.
 
